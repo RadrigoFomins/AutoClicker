@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['AutoClicker.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[],
