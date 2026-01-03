@@ -3,7 +3,7 @@ import os
 
 # Константы программы
 APP_NAME = "Auto Clicker"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.5"
 APP_TITLE = f"{APP_NAME} v{APP_VERSION}"
 
 def check_single_instance(app_name=APP_NAME):

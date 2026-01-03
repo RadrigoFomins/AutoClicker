@@ -60,7 +60,7 @@ class AutoClickerGUI:
         # Интервал кликов
         interval_frame = ttk.LabelFrame(
             parent, 
-            text="Интервал между кликами (мс)", 
+            text="Интервал между кликов (мс)", 
             padding="8",
             style="White.TLabelframe"
         )
@@ -250,8 +250,8 @@ class AutoClickerGUI:
         if self.timeout_enabled_var.get():
             self.timeout_entry.config(state=state)
         
-        # Блокируем чекбокс "Поверх всех окон"
-        self.always_on_top_check.config(state=state)
+        # НЕ блокируем чекбокс "Поверх всех окон" - он должен быть доступен всегда
+        # self.always_on_top_check.config(state=state)
     
     def toggle_timeout_mode(self):
         """Включить/выключить поле ввода времени тайм-аута"""
@@ -355,7 +355,7 @@ class AutoClickerGUI:
         self.is_running = True
         self.click_worker.is_running = True
         
-        # Блокируем все настройки
+        # Блокируем все настройки, кроме настроек окна
         self.lock_all_settings(True)
         
         # Обновляем состояние кнопок
