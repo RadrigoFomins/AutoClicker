@@ -72,7 +72,7 @@
 <h3>Windows</h3>
 <ol start="1">
   <li>
-    <p>Скачайте файл <code>AutoClicker.exe</code></p>
+    <p>Скачайте файл <code>dist/AutoClicker.exe</code></p>
   </li>
   <li>
     <p>Запустите файл двойным кликом</p>
