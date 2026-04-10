@@ -14,15 +14,17 @@ class AutoClickerGUI:
         self.root.title(APP_TITLE)
         self.root.geometry("302x448")
         self.root.resizable(False, False)
-        
+
         # Устанавливаем белый фон для всего окна
         self.root.configure(bg='white')
-        
+
         # Инициализация компонентов
         self.is_running = False
         self.always_on_top = False
         self.hotkeys_registered = False
-        
+        # Блокировка для защиты от повторного входа
+        self._start_lock = threading.Lock()
+
         # Инициализация обработчиков
         self.click_worker = ClickWorker(self)
         self.mouse_handler = MouseHandler(self)
@@ -48,19 +50,23 @@ class AutoClickerGUI:
         
         # Включаем режим "Поверх всех окон" по умолчанию
         self.root.after(100, self.initialize_always_on_top)
-        
+
         # Обработка закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        
+
         # Привязываем горячие клавиши с небольшой задержкой
         self.root.after(200, self.setup_hotkeys)
+
+        # Периодическая проверка горячих клавиш (каждые 5 секунд)
+        self._check_hotkeys_interval = 5000  # 5 секунд
+        self._check_hotkeys()
     
     def create_widgets(self, parent):
         """Создание всех виджетов интерфейса"""
         # Интервал кликов
         interval_frame = ttk.LabelFrame(
             parent, 
-            text="Интервал между кликов (мс)", 
+            text="Интервал кликов (мс)", 
             padding="8",
             style="White.TLabelframe"
         )
@@ -68,7 +74,7 @@ class AutoClickerGUI:
         
         # Минимальный интервал
         ttk.Label(interval_frame, text="Мин.:", style="White.TLabel").grid(row=0, column=0, padx=(0, 5))
-        self.min_interval_var = tk.StringVar(value="200")
+        self.min_interval_var = tk.StringVar(value="2000")
         self.min_interval_entry = ttk.Entry(
             interval_frame, 
             textvariable=self.min_interval_var, 
@@ -79,7 +85,7 @@ class AutoClickerGUI:
         
         # Максимальный интервал
         ttk.Label(interval_frame, text="Макс.:", style="White.TLabel").grid(row=0, column=2, padx=(10, 5))
-        self.max_interval_var = tk.StringVar(value="300")
+        self.max_interval_var = tk.StringVar(value="3500")
         self.max_interval_entry = ttk.Entry(
             interval_frame, 
             textvariable=self.max_interval_var, 
@@ -270,25 +276,62 @@ class AutoClickerGUI:
         self.always_on_top = self.always_on_top_var.get()
         self.root.attributes('-topmost', self.always_on_top)
     
+    def _check_hotkeys(self):
+        """Периодическая проверка и переподключение горячих клавиш"""
+        try:
+            if not self.hotkeys_registered:
+                print("Горячие клавиши не зарегистрированы, пробуем снова...")
+                self.setup_hotkeys()
+            else:
+                # Проверяем, что хуки всё ещё работают
+                import keyboard
+                # keyboard.is_pressed() может вызвать ошибку если хук потерян
+                try:
+                    keyboard.is_pressed('f6')
+                except Exception as e:
+                    print(f"Хук keyboard потерян, переподключаем: {e}")
+                    self._cleanup_hotkeys()
+                    self.setup_hotkeys()
+        except Exception as e:
+            print(f"Ошибка проверки горячих клавиш: {e}")
+        finally:
+            # Планируем следующую проверку
+            if self.root.winfo_exists():
+                self.root.after(self._check_hotkeys_interval, self._check_hotkeys)
+
     def setup_hotkeys(self):
         """Настройка горячих клавиш"""
         try:
+            # Проверяем и удаляем старые хуки, если они есть
+            self._cleanup_hotkeys()
+
             def safe_start():
                 if self.root.winfo_exists():
-                    self.start_clicking()
-            
+                    self.root.after(0, lambda: self.start_clicking())
+
             def safe_stop():
                 if self.root.winfo_exists():
-                    self.stop_clicking()
-            
-            keyboard.add_hotkey('F6', lambda: self.root.after(0, safe_start))
-            keyboard.add_hotkey('F7', lambda: self.root.after(0, safe_stop))
-            
+                    self.root.after(0, lambda: self.stop_clicking())
+
+            keyboard.add_hotkey('F6', safe_start, suppress=False)
+            keyboard.add_hotkey('F7', safe_stop, suppress=False)
+
             self.hotkeys_registered = True
-            
+            print("Горячие клавиши F6/F7 зарегистрированы")
+
         except Exception as e:
             print(f"Ошибка настройки горячих клавиш: {e}")
             self.hotkeys_registered = False
+
+    def _cleanup_hotkeys(self):
+        """Очистка зарегистрированных горячих клавиш"""
+        try:
+            if self.hotkeys_registered:
+                keyboard.remove_hotkey('F6')
+                keyboard.remove_hotkey('F7')
+                self.hotkeys_registered = False
+        except Exception as e:
+            print(f"Ошибка очистки горячих клавиш: {e}")
     
     def start_getting_coords(self):
         """Начать процесс получения координат следующего клика"""
@@ -331,49 +374,77 @@ class AutoClickerGUI:
     
     def start_clicking(self):
         """Запуск кликов"""
-        if self.is_running:
+        # Защита от повторного входа
+        if not self._start_lock.acquire(blocking=False):
+            print("start_clicking уже вызывается, игнорируем повторный вызов")
             return
-            
-        if not self.click_worker.validate_inputs(
-            self.min_interval_var, self.max_interval_var, self.click_mode_var,
-            self.x_var, self.y_var, self.timeout_enabled_var, self.timeout_var
-        ):
-            return
-        
-        if self.mouse_handler.getting_coords:
-            self.cancel_getting_coords()
-        
-        # Полностью останавливаем предыдущий поток, если он есть
-        if self.click_worker.click_thread and self.click_worker.click_thread.is_alive():
-            self.stop_clicking()
-            time.sleep(0.1)
-        
-        # Сбрасываем событие остановки
-        self.click_worker.stop_event.clear()
-        
-        # Устанавливаем флаг запуска
-        self.is_running = True
-        self.click_worker.is_running = True
-        
-        # Блокируем все настройки, кроме настроек окна
-        self.lock_all_settings(True)
-        
-        # Обновляем состояние кнопок
-        self.start_btn.config(state="disabled")
-        self.stop_btn.config(state="normal")
-        
-        # Создаем новый поток для кликов
-        self.click_worker.click_thread = threading.Thread(target=self.click_worker.click_loop, daemon=True)
-        self.click_worker.click_thread.start()
-        
-        # Запускаем таймер, если включен тайм-аут
-        if self.timeout_enabled_var.get():
-            # Сбрасываем событие таймера
+
+        try:
+            if self.is_running:
+                return
+
+            if not self.click_worker.validate_inputs(
+                self.min_interval_var, self.max_interval_var, self.click_mode_var,
+                self.x_var, self.y_var, self.timeout_enabled_var, self.timeout_var
+            ):
+                return
+
+            if self.mouse_handler.getting_coords:
+                self.cancel_getting_coords()
+
+            # Полностью останавливаем предыдущий поток, если он есть
+            if self.click_worker.click_thread and self.click_worker.click_thread.is_alive():
+                self._force_stop_workers()
+                time.sleep(0.1)
+
+            # Сбрасываем событие остановки
+            self.click_worker.stop_event.clear()
             self.click_worker.timer_event.clear()
-            # Запускаем таймер в отдельном потоке
-            self.click_worker.timer_thread = threading.Thread(target=self.click_worker.timeout_timer, daemon=True)
-            self.click_worker.timer_thread.start()
+
+            # Устанавливаем флаг запуска
+            self.is_running = True
+            self.click_worker.is_running = True
+
+            # Блокируем все настройки, кроме настроек окна
+            self.lock_all_settings(True)
+
+            # Обновляем состояние кнопок
+            self.start_btn.config(state="disabled")
+            self.stop_btn.config(state="normal")
+
+            # Создаем новый поток для кликов
+            self.click_worker.click_thread = threading.Thread(target=self.click_worker.click_loop, daemon=True)
+            self.click_worker.click_thread.start()
+
+            # Запускаем таймер, если включен тайм-аут
+            if self.timeout_enabled_var.get():
+                # Запускаем таймер в отдельном потоке
+                self.click_worker.timer_thread = threading.Thread(target=self.click_worker.timeout_timer, daemon=True)
+                self.click_worker.timer_thread.start()
+        finally:
+            self._start_lock.release()
     
+    def _force_stop_workers(self):
+        """Принудительная остановка всех рабочих потоков"""
+        self.is_running = False
+        self.click_worker.is_running = False
+        self.click_worker.stop_event.set()
+        self.click_worker.timer_event.set()
+
+        # Ждем завершения потока кликов
+        if self.click_worker.click_thread and self.click_worker.click_thread.is_alive():
+            self.click_worker.click_thread.join(timeout=2.0)
+            if self.click_worker.click_thread.is_alive():
+                print("Предупреждение: Поток кликов не завершился вовремя")
+            self.click_worker.click_thread = None
+
+        # Ждем завершения потока таймера
+        if self.click_worker.timer_thread and self.click_worker.timer_thread.is_alive():
+            self.click_worker.timer_thread.join(timeout=1.0)
+            if self.click_worker.timer_thread.is_alive():
+                print("Предупреждение: Поток таймера не завершился вовремя")
+            self.click_worker.timer_thread = None
+
     def stop_clicking(self):
         """Остановка кликов"""
         # Устанавливаем флаг остановки
@@ -381,29 +452,29 @@ class AutoClickerGUI:
         self.click_worker.is_running = False
         self.click_worker.stop_event.set()
         self.click_worker.timer_event.set()  # Останавливаем таймер
-        
+
         # Ждем завершения потоков
         if self.click_worker.click_thread and self.click_worker.click_thread.is_alive():
             self.click_worker.click_thread.join(timeout=2.0)
-            
+
             if self.click_worker.click_thread.is_alive():
                 print("Предупреждение: Поток кликов не завершился вовремя")
                 self.click_worker.click_thread = None
-        
+
         if self.click_worker.timer_thread and self.click_worker.timer_thread.is_alive():
             self.click_worker.timer_thread.join(timeout=1.0)
-            
+
             if self.click_worker.timer_thread.is_alive():
                 print("Предупреждение: Поток таймера не завершился вовремя")
                 self.click_worker.timer_thread = None
-        
+
         # Разблокируем все настройки
         self.lock_all_settings(False)
-        
+
         # Обновляем состояние кнопок в основном потоке
         self.start_btn.config(state="normal")
         self.stop_btn.config(state="disabled")
-        
+
         # Восстанавливаем состояние полей в зависимости от режимов
         self.toggle_coords_mode()
         self.toggle_timeout_mode()
@@ -412,17 +483,12 @@ class AutoClickerGUI:
         """Обработка закрытия окна"""
         # Останавливаем клики
         self.stop_clicking()
-        
+
         # Отменяем получение координат
         self.cancel_getting_coords()
-        
+
         # Удаляем горячие клавиши
-        try:
-            if self.hotkeys_registered:
-                keyboard.remove_hotkey('F6')
-                keyboard.remove_hotkey('F7')
-        except:
-            pass
-        
+        self._cleanup_hotkeys()
+
         # Закрываем окно
         self.root.destroy()

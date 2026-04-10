@@ -11,6 +11,8 @@ class ClickWorker:
         self.stop_event = threading.Event()
         self.timer_thread = None
         self.timer_event = threading.Event()
+        # Блокировка для синхронизации доступа к параметрам
+        self._params_lock = threading.Lock()
     
     def validate_inputs(self, min_interval_var, max_interval_var, click_mode_var, 
                        x_var, y_var, timeout_enabled_var, timeout_var):
@@ -109,45 +111,53 @@ class ClickWorker:
         """Основной цикл кликов"""
         try:
             while self.is_running and not self.stop_event.is_set():
-                min_interval = int(self.app.min_interval_var.get())
-                max_interval = int(self.app.max_interval_var.get())
+                # Читаем параметры с блокировкой для синхронизации
+                with self._params_lock:
+                    min_interval = int(self.app.min_interval_var.get())
+                    max_interval = int(self.app.max_interval_var.get())
+                    use_coords = self.app.click_mode_var.get()
+                    if use_coords:
+                        x = int(self.app.x_var.get())
+                        y = int(self.app.y_var.get())
+
                 interval = random.randint(min_interval, max_interval) / 1000.0
-                
-                if self.app.click_mode_var.get():
-                    x = int(self.app.x_var.get())
-                    y = int(self.app.y_var.get())
-                    
+
+                if use_coords:
                     try:
                         # ОТКЛЮЧАЕМ FAIL-SAFE для точности
                         pyautogui.FAILSAFE = False
-                        
+
                         # 1. Получаем ТОЧНЫЕ текущие координаты
                         current_x, current_y = pyautogui.position()
-                        
+
                         # 2. Кликаем по абсолютным координатам
                         pyautogui.click(x=x, y=y)
-                        
+
                         # 3. Если курсор сместился во время клика, возвращаем его
                         new_x, new_y = pyautogui.position()
                         if abs(new_x - current_x) > 5 or abs(new_y - current_y) > 5:
                             # Курсор сместился - возвращаем на место
                             pyautogui.moveTo(current_x, current_y, duration=0)
-                        
+
                         # ВКЛЮЧАЕМ FAIL-SAFE обратно
                         pyautogui.FAILSAFE = True
-                        
+
                     except Exception as e:
                         # Всегда включаем fail-safe обратно при ошибке
                         pyautogui.FAILSAFE = True
                         print(f"Ошибка при клике: {e}")
-                        
+
                 else:
                     # Обычный клик в текущей позиции
                     pyautogui.click()
-                
-                # Пауза с возможностью прерывания
-                self.stop_event.wait(timeout=interval)
-                
+
+                # Пауза с возможностью прерывания (проверяем чаще)
+                wait_step = 0.05
+                elapsed = 0
+                while elapsed < interval and self.is_running and not self.stop_event.is_set():
+                    time.sleep(wait_step)
+                    elapsed += wait_step
+
         except Exception as e:
             from tkinter import messagebox
             self.app.root.after(0, lambda: messagebox.showerror("Ошибка", str(e)))
