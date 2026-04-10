@@ -68,7 +68,7 @@ class AutoClickerGUI:
         
         # Минимальный интервал
         ttk.Label(interval_frame, text="Мин.:", style="White.TLabel").grid(row=0, column=0, padx=(0, 5))
-        self.min_interval_var = tk.StringVar(value="30000")
+        self.min_interval_var = tk.StringVar(value="200")
         self.min_interval_entry = ttk.Entry(
             interval_frame, 
             textvariable=self.min_interval_var, 
@@ -79,7 +79,7 @@ class AutoClickerGUI:
         
         # Максимальный интервал
         ttk.Label(interval_frame, text="Макс.:", style="White.TLabel").grid(row=0, column=2, padx=(10, 5))
-        self.max_interval_var = tk.StringVar(value="35000")
+        self.max_interval_var = tk.StringVar(value="300")
         self.max_interval_entry = ttk.Entry(
             interval_frame, 
             textvariable=self.max_interval_var, 
